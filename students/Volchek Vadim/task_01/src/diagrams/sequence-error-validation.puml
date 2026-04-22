@@ -1,0 +1,11 @@
+@startuml
+actor Reporter
+participant "Bug API" as API
+participant "Bug Service" as SVC
+
+Reporter -> API: POST /bugs (priority=URGENT)
+API -> SVC: CreateBug(command)
+SVC -> SVC: validate()
+SVC --> API: ValidationError(INVALID_PRIORITY)
+API --> Reporter: 400 Bad Request
+@enduml

@@ -1,0 +1,10 @@
+version: "3.9"
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: bugtracker
+      POSTGRES_PASSWORD: bugtracker
+      POSTGRES_DB: bugtracker
+    ports:
+      - "5432:5432"

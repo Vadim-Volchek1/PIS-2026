@@ -1,0 +1,35 @@
+syntax = "proto3";
+
+package bugtracker;
+
+service BugService {
+  rpc CreateBug (CreateBugRequest) returns (CreateBugResponse);
+  rpc GetBug (GetBugRequest) returns (BugReply);
+  rpc ListActiveBugs (ListActiveBugsRequest) returns (stream BugReply);
+}
+
+message CreateBugRequest {
+  string project_id = 1;
+  string title = 2;
+  string priority = 3;
+}
+
+message CreateBugResponse {
+  string bug_id = 1;
+}
+
+message GetBugRequest {
+  string bug_id = 1;
+}
+
+message ListActiveBugsRequest {
+  string project_id = 1;
+}
+
+message BugReply {
+  string bug_id = 1;
+  string project_id = 2;
+  string title = 3;
+  string priority = 4;
+  string status = 5;
+}

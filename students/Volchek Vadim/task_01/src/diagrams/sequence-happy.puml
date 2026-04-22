@@ -1,0 +1,16 @@
+@startuml
+actor Reporter
+participant "Bug API" as API
+participant "Bug Service" as SVC
+database DB
+queue "Event Bus" as BUS
+
+Reporter -> API: POST /bugs
+API -> SVC: CreateBug(command)
+SVC -> SVC: validate()
+SVC -> DB: begin transaction
+SVC -> DB: insert bug
+SVC -> DB: commit
+SVC -> BUS: publish BugCreated
+API --> Reporter: 201 Created (bug_id)
+@enduml
