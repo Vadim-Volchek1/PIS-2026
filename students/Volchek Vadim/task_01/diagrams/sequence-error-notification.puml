@@ -1,0 +1,125 @@
+@startuml
+title Сценарий с ошибкой: Notification Service недоступен при назначении бага
+
+actor "Тестировщик" as QA
+participant "API Gateway" as Gateway
+participant "Assignment Service" as AssignSvc
+database "PostgreSQL" as DB
+queue "Event Bus\n(RabbitMQ)" as Bus
+participant "Notification\nWorker" as NotifyWorker
+participant "Email/Slack\nService" as NotifyApi
+
+note over QA, NotifyApi
+  Баг BUG-2026-0117 уже создан.
+  Тестировщик запускает автоназначение.
+end note
+
+QA -> Gateway: POST /api/bugs/BUG-2026-0117/assign
+activate Gateway
+
+Gateway -> AssignSvc: Пересылка запроса
+activate AssignSvc
+
+AssignSvc -> DB: BEGIN TRANSACTION
+activate DB
+
+AssignSvc -> DB: SELECT * FROM users\nWHERE role='DEVELOPER' AND status='AVAILABLE'\nLIMIT 1 FOR UPDATE
+DB --> AssignSvc: dev.volkov доступен
+
+AssignSvc -> DB: INSERT INTO bug_assignments\n(bug_id='BUG-2026-0117', user_id='dev.volkov')
+DB --> AssignSvc: OK
+
+AssignSvc -> DB: UPDATE bugs SET status='IN_PROGRESS'\nWHERE id='BUG-2026-0117'
+DB --> AssignSvc: OK
+
+AssignSvc -> DB: COMMIT TRANSACTION
+DB --> AssignSvc: Committed
+deactivate DB
+
+note over AssignSvc
+  Назначение выполнено успешно.
+  Отправка уведомлений асинхронна.
+end note
+
+AssignSvc -> Bus: publish(BugAssigned,\nbug_id='BUG-2026-0117', assignee='dev.volkov')
+activate Bus
+Bus --> AssignSvc: ACK
+deactivate Bus
+
+AssignSvc --> Gateway: 200 OK\n{bug_id: "BUG-2026-0117"}
+deactivate AssignSvc
+
+Gateway --> QA: 200 OK\n{bug_id: "BUG-2026-0117"}
+deactivate Gateway
+
+note over QA
+  Баг назначен, пользователь получил успех.
+end note
+
+== Асинхронная обработка уведомлений ==
+
+Bus -> NotifyWorker: consume(BugAssigned)
+activate NotifyWorker
+
+NotifyWorker -> NotifyWorker: Формирование\nсписка получателей
+
+NotifyWorker -> NotifyApi: sendNotification(dev.volkov,\n"Вам назначен BUG-2026-0117")
+activate NotifyApi
+
+note over NotifyApi #FFAAAA
+  Notification API недоступен!
+  Connection timeout 10s
+end note
+
+NotifyApi --x NotifyWorker: TimeoutException\nafter 10s
+deactivate NotifyApi
+
+NotifyWorker -> NotifyWorker: Обработка ошибки:\n- НЕ откатываем назначение\n- Помещаем в retry queue
+
+NotifyWorker -> DB: INSERT INTO notification_queue\n(bug_id='BUG-2026-0117', status='pending',\nretry_count=0, next_retry_at=NOW()+5min)
+activate DB
+DB --> NotifyWorker: OK
+deactivate DB
+
+NotifyWorker -> Bus: publish(NotificationFailed,\nbug_id='BUG-2026-0117', reason='timeout')
+activate Bus
+Bus --> NotifyWorker: ACK
+deactivate Bus
+
+note over NotifyWorker #FFFFAA
+  Уведомление поставлено в очередь.
+  Фоновый worker повторит попытку
+  через 5 минут.
+end note
+
+deactivate NotifyWorker
+
+== Повторная попытка через 5 минут ==
+
+NotifyWorker -> NotifyWorker: Запланировано\nповторное выполнение
+
+... 5 минут спустя ...
+
+activate NotifyWorker
+NotifyWorker -> DB: SELECT * FROM notification_queue\nWHERE status='pending'\nAND next_retry_at <= NOW()
+activate DB
+DB --> NotifyWorker: 1 запись\n(bug_id='BUG-2026-0117')
+deactivate DB
+
+NotifyWorker -> NotifyApi: sendNotification(dev.volkov, ...)
+activate NotifyApi
+NotifyApi --> NotifyWorker: delivered ✅
+deactivate NotifyApi
+
+NotifyWorker -> DB: UPDATE notification_queue\nSET status='delivered',\ndelivered_at=NOW()
+activate DB
+DB --> NotifyWorker: OK
+deactivate DB
+
+note over NotifyWorker #AAFFAA
+  Уведомление доставлено успешно!
+end note
+
+deactivate NotifyWorker
+
+@enduml

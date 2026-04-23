@@ -1,0 +1,101 @@
+@startuml Bug Service - Hexagonal Architecture
+
+!define DOMAIN_COLOR #E8F5E9
+!define APPLICATION_COLOR #E3F2FD
+!define INFRASTRUCTURE_COLOR #FFF9C4
+
+skinparam backgroundColor #FFFFFF
+skinparam shadowing false
+skinparam rectangle {
+    BackgroundColor<<domain>> DOMAIN_COLOR
+    BorderColor<<domain>> #4CAF50
+    BackgroundColor<<application>> APPLICATION_COLOR
+    BorderColor<<application>> #2196F3
+    BackgroundColor<<infrastructure>> INFRASTRUCTURE_COLOR
+    BorderColor<<infrastructure>> #FFC107
+}
+
+title Гексагональная архитектура: Bug Service (Баг-трекер)
+
+package "Infrastructure Layer" <<infrastructure>> {
+    rectangle "REST API" as REST {
+        component "BugController" as Controller
+    }
+    rectangle "Persistence" as Persistence {
+        component "InMemoryBugRepository" as InMemRepo
+    }
+    rectangle "Notification" as Notification {
+        component "MockNotificationService" as MockNotify
+    }
+    rectangle "Configuration" as Config {
+        component "DependencyContainer" as Container
+    }
+}
+
+package "Application Layer" <<application>> {
+    rectangle "Inbound Ports" as InPorts {
+        interface "CreateBugUseCase" as CreateUC
+    }
+    rectangle "Outbound Ports" as OutPorts {
+        interface "BugRepository" as RepoPort
+        interface "NotificationService" as NotiPort
+    }
+    rectangle "Service" as Service {
+        component "BugService" as BugService
+    }
+}
+
+package "Domain Layer" <<domain>> {
+    rectangle "Aggregate" as Aggregate {
+        component "Bug" as Bug
+    }
+    rectangle "Entities" as Entities {
+        component "Project" as Project
+    }
+    rectangle "Value Objects / Enums" as VOs {
+        component "Priority" as Priority
+        component "BugStatus" as Status
+    }
+}
+
+Controller --> CreateUC : <<uses>>
+InMemRepo ..|> RepoPort : <<implements>>
+MockNotify ..|> NotiPort : <<implements>>
+Container --> Controller : <<creates>>
+Container --> InMemRepo : <<creates>>
+Container --> MockNotify : <<creates>>
+Container --> BugService : <<creates>>
+
+BugService ..|> CreateUC : <<implements>>
+BugService --> RepoPort : <<depends on>>
+BugService --> NotiPort : <<depends on>>
+
+BugService --> Bug : <<uses>>
+BugService --> Project : <<uses>>
+BugService --> Priority : <<uses>>
+BugService --> Status : <<uses>>
+
+Bug --> Priority : has
+Bug --> Status : has
+Bug --> Project : belongs to
+
+note right of Bug
+  <b>Агрегат: Bug</b>
+  ----
+  • id: BUG-YYYY-NNNN
+  • title, description
+  • priority: LOW/MEDIUM/HIGH/CRITICAL
+  • status: OPEN → IN_PROGRESS → RESOLVED → CLOSED
+  • assigneeId
+end note
+
+legend right
+  |<DOMAIN_COLOR>| <b>Domain Layer</b> |
+  | Чистая бизнес-логика |
+  |<APPLICATION_COLOR>| <b>Application Layer</b> |
+  | Порты и use-case сервисы |
+  |<INFRASTRUCTURE_COLOR>| <b>Infrastructure Layer</b> |
+  | Реализации адаптеров |
+endlegend
+
+@enduml

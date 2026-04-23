@@ -1,0 +1,102 @@
+@startuml
+title Успешный сценарий: Создание бага и назначение исполнителя
+
+actor "Тестировщик" as QA
+participant "API Gateway" as Gateway
+participant "Bug Service" as BugSvc
+participant "Assignment Service" as AssignSvc
+database "PostgreSQL" as DB
+queue "Event Bus\n(RabbitMQ)" as Bus
+participant "Notification\nWorker" as NotifyWorker
+participant "Email/Slack\nService" as NotifyApi
+
+== Транзакция №1: Создание бага ==
+
+QA -> Gateway: POST /api/bugs\n{title: "Падение при загрузке",\npriority: "HIGH", project_id: "PIS-WEB"}
+activate Gateway
+
+Gateway -> Gateway: Аутентификация\nи авторизация
+Gateway -> BugSvc: Пересылка запроса
+activate BugSvc
+
+BugSvc -> BugSvc: Валидация данных\n(заголовок, приоритет, вложения)
+
+BugSvc -> DB: BEGIN TRANSACTION
+activate DB
+
+BugSvc -> DB: INSERT INTO bugs\n(id, title, priority, status)\nVALUES ('BUG-2026-0117', ...,'OPEN')
+DB --> BugSvc: OK
+
+BugSvc -> DB: INSERT INTO bug_attachments\n(bug_id='BUG-2026-0117', ...)
+DB --> BugSvc: OK
+
+BugSvc -> DB: COMMIT TRANSACTION
+DB --> BugSvc: Committed
+deactivate DB
+
+BugSvc -> Bus: publish(BugCreated,\nbug_id='BUG-2026-0117')
+activate Bus
+Bus --> BugSvc: ACK
+deactivate Bus
+
+BugSvc --> Gateway: 201 Created\n{bug_id: "BUG-2026-0117",\nstatus: "OPEN"}
+deactivate BugSvc
+
+Gateway --> QA: 201 Created\n{bug_id, status}
+deactivate Gateway
+
+== Транзакция №2: Назначение исполнителя ==
+
+QA -> Gateway: POST /api/bugs/BUG-2026-0117/assign
+activate Gateway
+
+Gateway -> AssignSvc: Пересылка запроса
+activate AssignSvc
+
+AssignSvc -> DB: BEGIN TRANSACTION
+activate DB
+
+AssignSvc -> DB: SELECT * FROM users\nWHERE role='DEVELOPER'\nAND status='AVAILABLE'\nLIMIT 1 FOR UPDATE
+DB --> AssignSvc: dev.volkov
+
+AssignSvc -> DB: INSERT INTO bug_assignments\n(bug_id, user_id)\nVALUES ('BUG-2026-0117','dev.volkov')
+DB --> AssignSvc: OK
+
+AssignSvc -> DB: UPDATE bugs\nSET status='IN_PROGRESS'\nWHERE id='BUG-2026-0117'
+DB --> AssignSvc: OK
+
+AssignSvc -> DB: COMMIT TRANSACTION
+DB --> AssignSvc: Committed
+deactivate DB
+
+AssignSvc -> Bus: publish(BugAssigned,\nbug_id='BUG-2026-0117', assignee='dev.volkov')
+activate Bus
+Bus --> AssignSvc: ACK
+deactivate Bus
+
+AssignSvc --> Gateway: 200 OK\n{bug_id: "BUG-2026-0117",\nassignee: "dev.volkov"}
+deactivate AssignSvc
+
+Gateway --> QA: 200 OK\n{bug_id, assignee}
+deactivate Gateway
+
+== Асинхронная отправка уведомлений ==
+
+Bus -> NotifyWorker: consume(BugAssigned)
+activate NotifyWorker
+
+NotifyWorker -> NotifyWorker: Формирование\nсписка получателей
+
+NotifyWorker -> NotifyApi: sendNotification(dev.volkov,\n"Вам назначен BUG-2026-0117")
+activate NotifyApi
+NotifyApi --> NotifyWorker: delivered
+deactivate NotifyApi
+
+NotifyWorker -> DB: UPDATE notification_queue\nSET status='delivered'
+activate DB
+DB --> NotifyWorker: OK
+deactivate DB
+
+deactivate NotifyWorker
+
+@enduml
